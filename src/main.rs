@@ -177,14 +177,17 @@ async fn shutdown_signal(
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
+    let clean = || async {
+        clean_iptables(ipt, protected_port).unwrap();
+        clean_ipset(ipset_session.lock().await.deref_mut()).unwrap();
+    };
+
     tokio::select! {
         _ = ctrl_c => {
-            clean_iptables(ipt,protected_port).unwrap();
-            clean_ipset(ipset_session.lock().await.deref_mut()).unwrap();
+            clean().await;
         },
         _ = terminate => {
-            clean_iptables(ipt,protected_port).unwrap();
-            clean_ipset(ipset_session.lock().await.deref_mut()).unwrap();
+            clean().await;
         },
     }
 }
