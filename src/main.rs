@@ -139,13 +139,13 @@ fn setup_iptables(protected_port: String) -> Result<IPTables> {
     Ok(ipt)
 }
 
-fn clean_iptables(ipt: IPTables) -> Result<()> {
+fn clean_iptables(ipt: IPTables, protected_port: String) -> Result<()> {
     ipt.delete(
         "filter",
         "INPUT",
         format!(
-            "-p udp --match multiport --dports port -j {}",
-            IPTABLES_CHAIN
+            "-p udp --match multiport --dports {} -j {}",
+            protected_port, IPTABLES_CHAIN
         )
         .as_str(),
     )
@@ -155,7 +155,11 @@ fn clean_iptables(ipt: IPTables) -> Result<()> {
     Ok(())
 }
 
-async fn shutdown_signal(ipt: IPTables, ipset_session: Arc<Mutex<Session<HashIp>>>) {
+async fn shutdown_signal(
+    ipt: IPTables,
+    protected_port: String,
+    ipset_session: Arc<Mutex<Session<HashIp>>>,
+) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -175,11 +179,11 @@ async fn shutdown_signal(ipt: IPTables, ipset_session: Arc<Mutex<Session<HashIp>
 
     tokio::select! {
         _ = ctrl_c => {
-            clean_iptables(ipt).unwrap();
+            clean_iptables(ipt,protected_port).unwrap();
             clean_ipset(ipset_session.lock().await.deref_mut()).unwrap();
         },
         _ = terminate => {
-            clean_iptables(ipt).unwrap();
+            clean_iptables(ipt,protected_port).unwrap();
             clean_ipset(ipset_session.lock().await.deref_mut()).unwrap();
         },
     }
@@ -190,7 +194,10 @@ async fn main() {
     let arg = Args::parse();
     // let mut session: Session<HashIp> = Session::<HashIp>::new("gmad-whitelist".to_string());
     let ipset_session = setup_ipset().unwrap();
-    let iptables = setup_iptables(arg.protect).unwrap();
+
+    let protected_port = arg.protect.clone();
+
+    let iptables = setup_iptables(protected_port).unwrap();
 
     let arc_ipset_session = Arc::new(Mutex::new(ipset_session));
     let app = Router::new()
@@ -213,7 +220,11 @@ async fn main() {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal(iptables, arc_ipset_session.clone()))
+    .with_graceful_shutdown(shutdown_signal(
+        iptables,
+        arg.protect,
+        arc_ipset_session.clone(),
+    ))
     .await
     .unwrap();
 }
