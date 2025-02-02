@@ -195,9 +195,9 @@ async fn main() {
     // let mut session: Session<HashIp> = Session::<HashIp>::new("gmad-whitelist".to_string());
     let ipset_session = setup_ipset().unwrap();
 
-    let protected_port = arg.protect.clone();
+    let protected_port = &arg.protect;
 
-    let iptables = setup_iptables(protected_port).unwrap();
+    let iptables = setup_iptables(protected_port.to_string()).unwrap();
 
     let arc_ipset_session = Arc::new(Mutex::new(ipset_session));
     let app = Router::new()
@@ -222,7 +222,7 @@ async fn main() {
     )
     .with_graceful_shutdown(shutdown_signal(
         iptables,
-        arg.protect,
+        protected_port.to_string(),
         arc_ipset_session.clone(),
     ))
     .await
