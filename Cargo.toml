@@ -1,0 +1,11 @@
+[package]
+name = "mortis-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.27", features = ["derive"] }
+ipset = "0.8.0"
+iptables = "0.5.2"
+tokio = { version = "1", features = ["full"] }
+warp = "0.3.7"
