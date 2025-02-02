@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.95"
+axum = "0.8.1"
 clap = { version = "4.5.27", features = ["derive"] }
 ipset = "0.8.0"
 iptables = "0.5.2"
 tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6.2", features = ["timeout", "trace"] }
 warp = "0.3.7"
