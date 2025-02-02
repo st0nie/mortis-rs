@@ -104,7 +104,7 @@ fn clean_ipset(ipset_session: &mut Session<HashIp>) -> Result<()> {
 
 fn setup_iptables(protected_port: String) -> Result<IPTables> {
     let ipt = iptables::new(false).unwrap();
-    ipt.new_chain("filter", "MORTIS").unwrap();
+    ipt.new_chain("filter", IPTABLES_CHAIN).unwrap();
 
     ipt.append(
         "filter",
@@ -124,14 +124,15 @@ fn setup_iptables(protected_port: String) -> Result<IPTables> {
     .unwrap();
     ipt.append("filter", IPTABLES_CHAIN,  "--match hashlimit --hashlimit 5/sec --hashlimit-burst 10 --hashlimit-mode srcip,dstport --hashlimit-name main -j RETURN").unwrap();
     ipt.append("filter", IPTABLES_CHAIN, "-j DROP").unwrap();
-    ipt.append(
+    ipt.insert(
         "filter",
         "INPUT",
         format!(
             "-p udp --match multiport --dports {} -j {}",
-            protected_port, IPTABLES_CHAIN
+            protected_port, IPTABLES_CHAIN,
         )
         .as_str(),
+        1,
     )
     .unwrap();
 
@@ -139,8 +140,6 @@ fn setup_iptables(protected_port: String) -> Result<IPTables> {
 }
 
 fn clean_iptables(ipt: IPTables) -> Result<()> {
-    ipt.flush_chain("filter", IPTABLES_CHAIN).unwrap();
-    ipt.delete_chain("filter", IPTABLES_CHAIN).unwrap();
     ipt.delete(
         "filter",
         "INPUT",
@@ -151,6 +150,8 @@ fn clean_iptables(ipt: IPTables) -> Result<()> {
         .as_str(),
     )
     .unwrap();
+    ipt.flush_chain("filter", IPTABLES_CHAIN).unwrap();
+    ipt.delete_chain("filter", IPTABLES_CHAIN).unwrap();
     Ok(())
 }
 
