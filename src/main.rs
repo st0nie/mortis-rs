@@ -8,8 +8,7 @@ use std::{net::SocketAddr, ops::DerefMut};
 
 use clap::Parser;
 
-use ipset::types::HashIp;
-use ipset::Session;
+use ipset::{types::HashIp, Session};
 use iptables::IPTables;
 
 use axum::{
@@ -18,15 +17,15 @@ use axum::{
     Router,
 };
 
-use std::sync::Arc;
+use axum_extra::{headers, TypedHeader};
 
-use std::time::Duration;
-use tokio::signal;
-use tokio::sync::Mutex;
-use tower_http::timeout::TimeoutLayer;
-use tower_http::trace::TraceLayer;
+use std::{sync::Arc, time::Duration};
 
-const IPTABLES_CHAIN: &str = "MORTIS";
+use tokio::{signal, sync::Mutex};
+use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
+
+const MORTIS: &str = "MORTIS";
+const IPTABLES_CHAIN: &str = MORTIS;
 const MORTIS_IPSET: &str = "mortis-whitelist";
 
 #[derive(Parser, Debug)]
@@ -45,7 +44,13 @@ async fn handler(
     key: Option<Path<String>>,
     State(ipset_session): State<Arc<Mutex<Session<HashIp>>>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    TypedHeader(user_agent): TypedHeader<headers::UserAgent>,
 ) -> std::result::Result<Response, AppError> {
+
+    if !user_agent.as_str().contains("GMod") {
+        return Ok(StatusCode::FORBIDDEN.into_response());
+    }
+
     if ipset_session.lock().await.test(addr.ip())? {
         ipset_session.lock().await.del(addr.ip())?;
     }

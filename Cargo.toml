@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.95"
 axum = "0.8.1"
+axum-extra = { version = "0.10.0", features = ["typed-header"] }
 clap = { version = "4.5.27", features = ["derive"] }
 ipset = "0.8.0"
 iptables = "0.5.2"
