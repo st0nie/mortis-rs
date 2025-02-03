@@ -102,7 +102,7 @@ fn clean_ipset(ipset_session: &mut Session<HashIp>) -> Result<()> {
     Ok(())
 }
 
-fn setup_iptables(protected_port: String) -> Result<IPTables> {
+fn setup_iptables(protected_port: &str) -> Result<IPTables> {
     let ipt = iptables::new(false).unwrap();
     ipt.new_chain("filter", IPTABLES_CHAIN).unwrap();
 
@@ -139,7 +139,7 @@ fn setup_iptables(protected_port: String) -> Result<IPTables> {
     Ok(ipt)
 }
 
-fn clean_iptables(ipt: IPTables, protected_port: String) -> Result<()> {
+fn clean_iptables(ipt: IPTables, protected_port: &str) -> Result<()> {
     ipt.delete(
         "filter",
         "INPUT",
@@ -178,7 +178,7 @@ async fn shutdown_signal(
     let terminate = std::future::pending::<()>();
 
     let clean = || async {
-        clean_iptables(ipt, protected_port).unwrap();
+        clean_iptables(ipt, &protected_port).unwrap();
         clean_ipset(ipset_session.lock().await.deref_mut()).unwrap();
     };
 
@@ -198,9 +198,7 @@ async fn main() {
     // let mut session: Session<HashIp> = Session::<HashIp>::new("gmad-whitelist".to_string());
     let ipset_session = setup_ipset().unwrap();
 
-    let protected_port = &arg.protect;
-
-    let iptables = setup_iptables(protected_port.to_string()).unwrap();
+    let iptables = setup_iptables(&arg.protect).unwrap();
 
     let arc_ipset_session = Arc::new(Mutex::new(ipset_session));
     let app = Router::new()
@@ -225,7 +223,7 @@ async fn main() {
     )
     .with_graceful_shutdown(shutdown_signal(
         iptables,
-        protected_port.to_string(),
+        arg.protect,
         arc_ipset_session.clone(),
     ))
     .await
