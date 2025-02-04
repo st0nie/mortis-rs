@@ -24,8 +24,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::{signal, sync::Mutex};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 
-const MORTIS: &str = "MORTIS";
-const IPTABLES_CHAIN: &str = MORTIS;
+const IPTABLES_CHAIN: &str = "mortis";
 const MORTIS_IPSET: &str = "mortis-whitelist";
 
 #[derive(Parser, Debug)]
@@ -127,7 +126,7 @@ fn setup_iptables(protected_port: &str) -> Result<IPTables> {
         .as_str(),
     )
     .unwrap();
-    ipt.append("filter", IPTABLES_CHAIN,  "--match hashlimit --hashlimit 5/sec --hashlimit-burst 10 --hashlimit-mode srcip,dstport --hashlimit-name main -j RETURN").unwrap();
+    ipt.append("filter", IPTABLES_CHAIN,  "--match hashlimit --hashlimit 5/sec --hashlimit-burst 10 --hashlimit-mode srcip,dstport --hashlimit-name mortis -j RETURN").unwrap();
     ipt.append("filter", IPTABLES_CHAIN, "-j DROP").unwrap();
     ipt.insert(
         "filter",
