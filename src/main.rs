@@ -44,10 +44,12 @@ async fn handler(
         return Ok(StatusCode::FORBIDDEN.into_response());
     }
 
-    if ipset_session.lock().await.test(addr.ip())? {
-        ipset_session.lock().await.del(addr.ip())?;
+    let mut ipset_session = ipset_session.lock().await;
+
+    if ipset_session.test(addr.ip())? {
+        ipset_session.del(addr.ip())?;
     }
-    ipset_session.lock().await.add(addr.ip(), &[])?;
+    ipset_session.add(addr.ip(), &[])?;
     if key.is_some() {
         return Ok(Redirect::temporary(&key.unwrap()).into_response());
     }
