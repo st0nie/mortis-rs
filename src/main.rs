@@ -1,25 +1,20 @@
 use anyhow::Result;
+
 use axum::{
     extract::{ConnectInfo, Path, State},
-    response::Redirect,
+    http::StatusCode,
+    response::{IntoResponse, Redirect, Response},
     routing::any,
+    Router,
 };
-use std::{net::SocketAddr, ops::DerefMut};
+use axum_extra::{headers, TypedHeader};
+
+use std::{net::SocketAddr, ops::DerefMut, sync::Arc, time::Duration};
 
 use clap::Parser;
 
 use ipset::{types::HashIp, Session};
 use iptables::IPTables;
-
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    Router,
-};
-
-use axum_extra::{headers, TypedHeader};
-
-use std::{sync::Arc, time::Duration};
 
 use tokio::{signal, sync::Mutex};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
@@ -45,7 +40,6 @@ async fn handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     TypedHeader(user_agent): TypedHeader<headers::UserAgent>,
 ) -> std::result::Result<Response, AppError> {
-
     if !user_agent.as_str().contains("GMod") {
         return Ok(StatusCode::FORBIDDEN.into_response());
     }
