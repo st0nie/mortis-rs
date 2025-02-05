@@ -50,16 +50,12 @@ async fn handler(
         ipset_session.del(addr.ip())?;
     }
     ipset_session.add(addr.ip(), &[])?;
-    if key.is_some() {
-        return Ok(Redirect::temporary(&key.unwrap()).into_response());
+
+    if let Some(path) = key {
+        return Ok(Redirect::temporary(&path).into_response());
     }
 
-    Ok(format!(
-        "ip:{} path:{}",
-        addr.ip(),
-        key.unwrap_or(Path("/".to_string())).0
-    )
-    .into_response())
+    Ok(StatusCode::OK.into_response())
 }
 
 struct AppError(anyhow::Error);
