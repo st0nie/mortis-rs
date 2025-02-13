@@ -112,7 +112,7 @@ fn setup_iptables(protected_port: &str) -> Result<IPTables> {
         "filter",
         IPTABLES_CHAIN,
         format!(
-            "--match set --match-set {} src -j ACCEPT",
+            "--match set --match-set {} src -j RETURN",
             MORTIS_IPSET.to_string()
         )
         .as_str(),
