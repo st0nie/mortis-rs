@@ -112,7 +112,7 @@ fn setup_iptables(protected_port: &str) -> Result<IPTables> {
         "filter",
         IPTABLES_CHAIN,
         format!(
-            "--match set --match-set {} src -j RETURN",
+            "--match set --match-set {} src --match hashlimit --hashlimit 150/sec --hashlimit-burst 10 --hashlimit-mode srcip --hashlimit-name mortis-white -j RETURN",
             MORTIS_IPSET.to_string()
         )
         .as_str(),
