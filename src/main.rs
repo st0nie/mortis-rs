@@ -112,14 +112,24 @@ fn setup_iptables(protected_port: &str) -> Result<IPTables> {
         "filter",
         IPTABLES_CHAIN,
         format!(
-            "--match set --match-set {} src --match hashlimit --hashlimit 150/sec --hashlimit-burst 10 --hashlimit-mode srcip --hashlimit-name mortis-white -j RETURN",
+            "--match set --match-set {} src --match hashlimit --hashlimit-above 150/sec --hashlimit-burst 10 --hashlimit-mode srcip --hashlimit-name mortis-white -j DROP",
             MORTIS_IPSET.to_string()
         )
         .as_str(),
     )
     .unwrap();
-    ipt.append("filter", IPTABLES_CHAIN,  "--match hashlimit --hashlimit 5/sec --hashlimit-burst 10 --hashlimit-mode srcip,dstport --hashlimit-name mortis -j RETURN").unwrap();
-    ipt.append("filter", IPTABLES_CHAIN, "-j DROP").unwrap();
+    ipt.append(
+        "filter",
+        IPTABLES_CHAIN,
+        format!(
+            "--match set --match-set {} src -j RETURN",
+            MORTIS_IPSET.to_string()
+        )
+        .as_str(),
+    )
+    .unwrap();
+    ipt.append("filter", IPTABLES_CHAIN,  "--match hashlimit --hashlimit-above 5/sec --hashlimit-burst 10 --hashlimit-mode srcip,dstport --hashlimit-name mortis -j DROP").unwrap();
+    ipt.append("filter", IPTABLES_CHAIN, "-j RETURN").unwrap();
     ipt.insert(
         "filter",
         "INPUT",
