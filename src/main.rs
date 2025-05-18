@@ -1,4 +1,6 @@
-use anyhow::Result;
+mod firewall;
+mod state;
+use anyhow::{Context, Result};
 
 use axum::{
     extract::{ConnectInfo, Path, State},
@@ -8,19 +10,14 @@ use axum::{
     Router,
 };
 use axum_extra::{headers, TypedHeader};
+use state::AppState;
 
 use std::{net::SocketAddr, ops::DerefMut, sync::Arc, time::Duration};
 
 use clap::Parser;
 
-use ipset::{types::HashIp, Session};
-use iptables::IPTables;
-
-use tokio::{signal, sync::Mutex};
+use tokio::{signal, sync::Mutex, time::Instant};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
-
-const IPTABLES_CHAIN: &str = "mortis";
-const MORTIS_IPSET: &str = "mortis-whitelist";
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -36,7 +33,7 @@ struct Args {
 
 async fn handler(
     key: Option<Path<String>>,
-    State(ipset_session): State<Arc<Mutex<Session<HashIp>>>>,
+    State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     TypedHeader(user_agent): TypedHeader<headers::UserAgent>,
 ) -> std::result::Result<Response, AppError> {
@@ -44,12 +41,27 @@ async fn handler(
         return Ok(StatusCode::FORBIDDEN.into_response());
     }
 
-    let mut ipset_session = ipset_session.lock().await;
+    let ip = addr.ip();
 
-    if ipset_session.test(addr.ip())? {
-        ipset_session.del(addr.ip())?;
+    let mut whitelist = state.whitelist.lock().await;
+
+    if whitelist.contains_key(&ip) == false {
+        whitelist.insert(ip, Instant::now());
+
+        let mut ipset = state.ipset_session.lock().await;
+        ipset.add(ip, &[])?;
+    } else {
+        let now = Instant::now();
+        if now.duration_since(whitelist[&ip]) > Duration::from_secs(300) {
+            let mut ipset = state.ipset_session.lock().await;
+            ipset.del(ip)?;
+            whitelist.remove(&ip);
+        } else {
+            whitelist.insert(ip, now);
+        }
     }
-    ipset_session.add(addr.ip(), &[])?;
+
+    drop(whitelist);
 
     if let Some(path) = key {
         return Ok(Redirect::temporary(&path).into_response());
@@ -79,93 +91,7 @@ where
     }
 }
 
-fn setup_ipset() -> Result<Session<HashIp>> {
-    let mut session: Session<HashIp> = Session::<HashIp>::new(MORTIS_IPSET.to_string());
-    session.create(|builder| {
-        builder
-            .with_ipv6(false)?
-            .with_timeout(300)?
-            .with_forceadd()?
-            .build()
-    })?;
-
-    Ok(session)
-}
-
-fn clean_ipset(ipset_session: &mut Session<HashIp>) -> Result<()> {
-    ipset_session.flush()?;
-    ipset_session.destroy()?;
-    Ok(())
-}
-
-fn setup_iptables(protected_port: &str) -> Result<IPTables> {
-    let ipt = iptables::new(false).unwrap();
-    ipt.new_chain("filter", IPTABLES_CHAIN).unwrap();
-
-    ipt.append(
-        "filter",
-        IPTABLES_CHAIN,
-        "-p udp --match multiport --sports 123,53,161,3702,19 -j DROP",
-    )
-    .unwrap();
-    ipt.append(
-        "filter",
-        IPTABLES_CHAIN,
-        format!(
-            "--match set --match-set {} src --match hashlimit --hashlimit-above 150/sec --hashlimit-burst 10 --hashlimit-mode srcip,dstport --hashlimit-name mortis-white -j DROP",
-            MORTIS_IPSET.to_string()
-        )
-        .as_str(),
-    )
-    .unwrap();
-    ipt.append(
-        "filter",
-        IPTABLES_CHAIN,
-        format!(
-            "--match set --match-set {} src -j RETURN",
-            MORTIS_IPSET.to_string()
-        )
-        .as_str(),
-    )
-    .unwrap();
-    ipt.append("filter", IPTABLES_CHAIN,  "--match hashlimit --hashlimit-above 5/sec --hashlimit-burst 10 --hashlimit-mode srcip,dstport --hashlimit-name mortis -j DROP").unwrap();
-    ipt.append("filter", IPTABLES_CHAIN, "-j RETURN").unwrap();
-    ipt.insert(
-        "filter",
-        "INPUT",
-        format!(
-            "-p udp --match multiport --dports {} -j {}",
-            protected_port, IPTABLES_CHAIN,
-        )
-        .as_str(),
-        1,
-    )
-    .unwrap();
-
-    Ok(ipt)
-}
-
-fn clean_iptables(ipt: IPTables, protected_port: &str) -> Result<()> {
-    ipt.delete(
-        "filter",
-        "INPUT",
-        format!(
-            "-p udp --match multiport --dports {} -j {}",
-            protected_port, IPTABLES_CHAIN
-        )
-        .as_str(),
-    )
-    .unwrap();
-    ipt.flush_chain("filter", IPTABLES_CHAIN).unwrap();
-    ipt.delete_chain("filter", IPTABLES_CHAIN).unwrap();
-    Ok(())
-}
-
-async fn shutdown_signal(
-    ipt: IPTables,
-    protected_port: String,
-    ipset_session: Arc<Mutex<Session<HashIp>>>,
-) {
+async fn shutdown_signal(state: Arc<AppState>) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -184,8 +110,13 @@ async fn shutdown_signal(
     let terminate = std::future::pending::<()>();
 
     let clean = || async {
-        clean_iptables(ipt, &protected_port).unwrap();
-        clean_ipset(ipset_session.lock().await.deref_mut()).unwrap();
+        let protected_port = state.args.protect.clone();
+        let ipt = &state.iptables;
+        let mut binding = state.ipset_session.lock().await;
+        let ipset_session = binding.deref_mut();
+
+        firewall::clean_iptables(ipt, &protected_port).unwrap();
+        firewall::clean_ipset(ipset_session).unwrap();
     };
 
     tokio::select! {
@@ -199,16 +130,25 @@ async fn shutdown_signal(
 }
 
 #[tokio::main]
-async fn main() {
-    let arg = Args::parse();
-    // let mut session: Session<HashIp> = Session::<HashIp>::new("gmad-whitelist".to_string());
-    let ipset_session = setup_ipset().unwrap();
+async fn main() -> Result<()> {
+    let args = Args::parse();
 
-    let iptables = setup_iptables(&arg.protect).unwrap();
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", &args.listen))
+        .await
+        .with_context(|| format!("Failed to bind to port {}", &args.listen))?;
 
-    let arc_ipset_session = Arc::new(Mutex::new(ipset_session));
+    let ipset_session =
+        firewall::setup_ipset().map_err(|e| anyhow::anyhow!("Failed to setup ipset: {}", e))?;
+    let iptables = firewall::setup_iptables(&args.protect)
+        .map_err(|e| anyhow::anyhow!("Failed to setup iptables: {}", e))?;
+
+    let state = Arc::new(AppState {
+        iptables,
+        ipset_session: Mutex::new(ipset_session),
+        whitelist: Mutex::new(std::collections::HashMap::new()),
+        args,
+    });
     let app = Router::new()
-        // `GET /` goes to `root`
         .route("/", any(handler))
         .route("/{*key}", any(handler))
         .layer((
@@ -217,21 +157,14 @@ async fn main() {
             // requests don't hang forever.
             TimeoutLayer::new(Duration::from_secs(10)),
         ))
-        .with_state(arc_ipset_session.clone());
+        .with_state(state.clone());
 
-    // run our app with hyper, listening globally on port 3000
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", arg.listen.to_string()))
-        .await
-        .unwrap();
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal(
-        iptables,
-        arg.protect,
-        arc_ipset_session.clone(),
-    ))
-    .await
-    .unwrap();
+    .with_graceful_shutdown(shutdown_signal(state))
+    .await?;
+
+    Ok(())
 }
