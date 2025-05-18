@@ -1,15 +1,16 @@
+mod cleaner;
 mod firewall;
 mod state;
 use anyhow::{Context, Result};
 
 use axum::{
+    Router,
     extract::{ConnectInfo, Path, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
     routing::any,
-    Router,
 };
-use axum_extra::{headers, TypedHeader};
+use axum_extra::{TypedHeader, headers};
 use state::AppState;
 
 use std::{net::SocketAddr, ops::DerefMut, sync::Arc, time::Duration};
@@ -46,20 +47,11 @@ async fn handler(
     let mut whitelist = state.whitelist.lock().await;
 
     if whitelist.contains_key(&ip) == false {
-        whitelist.insert(ip, Instant::now());
-
         let mut ipset = state.ipset_session.lock().await;
         ipset.add(ip, &[])?;
-    } else {
-        let now = Instant::now();
-        if now.duration_since(whitelist[&ip]) > Duration::from_secs(300) {
-            let mut ipset = state.ipset_session.lock().await;
-            ipset.del(ip)?;
-            whitelist.remove(&ip);
-        } else {
-            whitelist.insert(ip, now);
-        }
     }
+
+    whitelist.insert(ip, Instant::now());
 
     drop(whitelist);
 
@@ -163,8 +155,12 @@ async fn main() -> Result<()> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal(state))
+    .with_graceful_shutdown(shutdown_signal(state.clone()))
     .await?;
+
+    tokio::spawn(async move {
+        cleaner::task(state).await;
+    });
 
     Ok(())
 }
