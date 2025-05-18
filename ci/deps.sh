@@ -1,1 +1,1 @@
-apk add --update ipset-dev
+apk add --update ipset-dev clang18-dev
